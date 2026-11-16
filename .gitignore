@@ -11,9 +11,7 @@ __pycache__/
 *.spec
 build/
 dist/
-
-# Binaries over GitHub's 100MB limit (distribute via GitHub Releases)
-*.exe
+*_old.exe
 
 # Application runtime logs and scan results
 outputs/scan_results/
