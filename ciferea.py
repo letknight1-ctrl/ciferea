@@ -146,9 +146,9 @@ class ModelEngine:
         else:
             raise RuntimeError("No model loaded")
 
-        prob = 1.0 / (1.0 + np.exp(-logit))
-        is_abnormal = prob >= 0.5
-        confidence = prob if is_abnormal else 1.0 - prob
+        prob = float(1.0 / (1.0 + np.exp(-logit)))
+        is_abnormal = bool(prob >= 0.5)
+        confidence = float(prob if is_abnormal else 1.0 - prob)
         return is_abnormal, confidence
 
 
@@ -412,48 +412,64 @@ class CifereaApp(tk.Tk):
         thread.start()
 
     def _run_analysis_worker(self) -> None:
-        scan_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-        patient_name = self.ent_name.get().strip() or "Anonymous"
-        patient_id = self.ent_id.get().strip() or "N/A"
-        doctor_email = self.ent_email.get().strip()
+        try:
+            scan_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+            patient_name = self.ent_name.get().strip() or "Anonymous"
+            patient_id = self.ent_id.get().strip() or "N/A"
+            doctor_email = self.ent_email.get().strip()
 
-        is_abnormal = False
-        confidence = 0.0
-        prediction_text = "Healthy"
-
-        if self.engine.is_ready():
-            try:
-                is_abnormal, confidence = self.engine.predict(self.selected_file)
-                prediction_text = "Brain Tumor / Abnormality Detected" if is_abnormal else "Healthy Brain Structure"
-            except Exception as e:
-                prediction_text = f"Inference Error: {e}"
-        else:
-            prediction_text = "Model Not Loaded"
+            is_abnormal = False
             confidence = 0.0
+            prediction_text = "Healthy"
 
-        notification_status = ""
-        if is_abnormal:
-            notification_status = notify_doctor(
-                scan_id, patient_name, patient_id, str(self.selected_file), confidence, doctor_email
-            )
+            if self.engine.is_ready():
+                try:
+                    is_abnormal, confidence = self.engine.predict(self.selected_file)
+                    prediction_text = "Brain Tumor / Abnormality Detected" if is_abnormal else "Healthy Brain Structure"
+                except Exception as e:
+                    prediction_text = f"Inference Error: {e}"
+            else:
+                prediction_text = "Model Not Loaded"
+                confidence = 0.0
 
-        # Save record
-        record = {
-            "scan_id": scan_id,
-            "patient_name": patient_name,
-            "patient_id": patient_id,
-            "filename": self.selected_file.name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "prediction": prediction_text,
-            "abnormal": is_abnormal,
-            "confidence": round(confidence, 4),
-            "doctor_notified": is_abnormal,
-            "notification_status": notification_status,
-        }
-        with open(RESULTS_DIR / f"{scan_id}.json", "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2)
+            # Ensure pure native Python types for JSON compatibility
+            is_abnormal = bool(is_abnormal)
+            confidence = float(confidence)
 
-        self.after(0, self._display_results, record)
+            notification_status = ""
+            if is_abnormal:
+                notification_status = notify_doctor(
+                    scan_id, patient_name, patient_id, str(self.selected_file), confidence, doctor_email
+                )
+
+            # Save record
+            record = {
+                "scan_id": scan_id,
+                "patient_name": patient_name,
+                "patient_id": patient_id,
+                "filename": self.selected_file.name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "prediction": prediction_text,
+                "abnormal": is_abnormal,
+                "confidence": round(confidence, 4),
+                "doctor_notified": is_abnormal,
+                "notification_status": notification_status,
+            }
+            with open(RESULTS_DIR / f"{scan_id}.json", "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2, default=str)
+
+            self.after(0, self._display_results, record)
+        except Exception as exc:
+            self.after(0, self._display_error, str(exc))
+
+    def _display_error(self, err_msg: str) -> None:
+        self.btn_analyze.config(state="normal", text="🔬 Analyze Scan & Compare with Database")
+        self._update_banner("⚠️ ANALYSIS ERROR", "An error occurred during analysis.", self.accent_red)
+        self.report_text.config(state="normal")
+        self.report_text.delete("1.0", "end")
+        self.report_text.insert("1.0", f"Error during scan analysis:\n\n{err_msg}\n")
+        self.report_text.config(state="disabled")
+        messagebox.showerror("Analysis Error", f"Analysis encountered an error:\n{err_msg}")
 
     def _display_results(self, record: dict[str, Any]) -> None:
         self.btn_analyze.config(state="normal", text="🔬 Analyze Scan & Compare with Database")
